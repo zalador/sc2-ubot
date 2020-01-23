@@ -1,0 +1,55 @@
+# we exclude all previous code from python-sc2
+examples/*
+data/
+docs/
+docs_generate/
+generate_dicts_from_data_json.py
+generate_id_constants_from_stableid.py
+index.html
+setup.py
+test/*
+bat_files/*
+.nojekyll
+Pipfile
+Pipfile.lock
+
+sc2/*
+
+
+# vim specifics
+*.swp
+
+
+
+
+# Misc
+.DS_Store
+
+# Python + mypy + pytest
+__pycache__/
+*.pyc
+
+.mypy_cache/
+.pytest_cache/
+
+build/
+dist/
+*.egg-info/
+
+.cache/
+
+# SC2 things
+maps/
+mini_games/
+
+*.SC2Replay
+
+.hypothesis/
+
+# Editors
+.idea/
+.vscode/
+
+# Code coverage
+.coverage
+/htmlcov
