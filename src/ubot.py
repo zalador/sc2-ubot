@@ -14,6 +14,11 @@ class UBot(sc2.BotAI):
     def __init__(self):
         # Initialize inherited class
         sc2.BotAI.__init__(self)
+        
+        # apperantly we are running 8 frames per on_step
+        # this should be settable through some sort of
+        # self._client.game_step = 
+
         self.managers: List[BaseManager] = []
         self.gas_focus = True
 

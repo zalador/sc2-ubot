@@ -11,7 +11,7 @@ def main():
     sc2.run_game(
         sc2.maps.get("CatalystLE"),
         [Bot(Race.Protoss, UBot()), Computer(Race.Protoss, Difficulty.Easy)],
-        realtime=False,
+        realtime=True,
     )
 
 

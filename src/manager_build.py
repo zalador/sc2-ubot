@@ -108,26 +108,48 @@ class ManagerBuild(BaseManager):
         supply = bot.supply_used
         supply_cap = bot.supply_cap
         
-        idle_buildings = {}
-        for structure in bot.structures.filter(lambda s: s.is_idle and s.is_ready):
-            if structure in idle_buildings:
-                idle_buildings[structure.type_id] += 1
-            else:
-                idle_buildings[structure.type_id] = 1
-
         units = {}
+        idle_buildings = {}
+        busy_units = []
+
+        for structure in bot.structures:
+            if structure.build_progress < 1:
+                cost = bot.calculate_cost(structure.type_id)
+                build_time_left = (1-structure.build_progress)*cost.time
+                busy_units.append((structure.type_id, build_time_left))
+
+            elif structure.is_idle:
+                if structure.type_id not in idle_buildings:
+                    idle_buildings[structure.type_id] = 0
+                idle_buildings[structure.type_id] += 1
+            elif structure.is_using_ability:
+                order = structure.orders[0] # we can never have more than one in queue
+                order_id = order.ability
+                progress = order.progress
+                cost_time = bot.calculate_cost(order_id).time
+
+                # apperantly difficult to get the UnitTypeId from AbilityId in a nice way, might wanna create our own dict for that
+                # however, we can just disregard this as of now
+                print("order: {}".format(order))
+                print("time left in ticks: {}".format((1-progress) * cost_time))
+                busy_units.append((structure.type_id, (1-progress) * cost_time))
+            else:
+                # this "should" not happen xd
+                print("ERROR, PLEASE LOOK FOR THIS IN MANAGER_BUILD\n,\
+                       ERROR, PLEASE LOOK FOR THIS IN MANAGER_BUILD\n,\
+                       ERROR, PLEASE LOOK FOR THIS IN MANAGER_BUILD")
+
         for unit in bot.units:
             if unit in units:
                 units[unit.type_id] += 1
             else:
                 units[unit.type_id] = 1
 
-        busy_units = []
-        for structure in bot.structures.filter(lambda s: not s.is_idle):
-            busy_units.append((structure.type_id, 50)) # fix this
+        #for structure in bot.structures.filter(lambda s: ):
+        #    busy_units.append((structure.type_id, 50)) # fix this
 
         plan = []
-        
+
         bo_state = BuildorderState(minerals, vespene,
                         w_minerals, w_vespene,
                         supply, supply_cap,
