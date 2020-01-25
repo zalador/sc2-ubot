@@ -27,16 +27,16 @@ class ManagerBuild(BaseManager):
         We keep a linear list of stuff to build
         To handle research ids, a more general list is needed, perhaps a isinstance can work
         """
-        self.build_queue: List[UnitTypeId] = [PROBE, PROBE, PYLON, PROBE, PROBE, GATEWAY, PROBE, PYLON, PROBE, PROBE, GATEWAY, PROBE, ASSIMILATOR, PYLON, ZEALOT, PROBE, CYBERNETICSCORE, ZEALOT, ZEALOT, ZEALOT, ZEALOT, ZEALOT, PYLON, ZEALOT, ZEALOT, PYLON, STALKER, STALKER, STALKER, ZEALOT]
+        self.build_queue: List[UnitTypeId] = [PROBE, PROBE, PYLON, PROBE, ASSIMILATOR, GATEWAY, PROBE, PYLON, PROBE, PROBE, CYBERNETICSCORE, PROBE, STALKER]
 
     async def build_unit(self, bot : sc2.BotAI, unit_id : UnitTypeId) -> bool:
         """
         Tries to build a unit with id: unit_id
         returns True if successfull
 
-        Currently does not handle complex buildings (warpgates, assimilators, nexuses)
+        Currently does not handle complex buildings (warpgates, nexuses)
         """
-        if not bot.can_afford(unit_id):
+        if not bot.can_afford(unit_id): # only tests
             return False
 
         build_req = self.build_info(unit_id)
@@ -46,9 +46,11 @@ class ManagerBuild(BaseManager):
             pylon = bot.structures(PYLON).ready.random_or(None)
             nexus = bot.structures(NEXUS).random
 
-            if requires_power and not pylon:
+            if "required_building" in build_dict and not bot.structures(build_dict["required_building"]).ready.amount >= 1:
                 return False
 
+            if requires_power and not pylon:
+                return False
           
             if from_id == PROBE:
                 # Here we need a big switch case for all different buildings
@@ -92,7 +94,8 @@ class ManagerBuild(BaseManager):
         """
         Returns a list of pairs: [UnitTypeId, {"ability" : AbilityId, constraints}] 
         that specify what builds the unit and with what ability
-        The constraints specify 'requires_position' and 'requires_power' etc
+        The constraints specify 'requires_position' and 'requires_power'
+        'required_building' might be a list of buildings, should probably check this
         """
         # all units that can build the one we are looking for
         built_from = list(UNIT_TRAINED_FROM[unit_id])
@@ -100,10 +103,16 @@ class ManagerBuild(BaseManager):
         ids = [TRAIN_INFO[unit][unit_id] for unit in built_from]
         return list(zip(built_from, ids))
     
-    def test(self, bot):
+    def get_buildorder_state(self, bot):
+        """
+        Creates a BuildorderState from the current game state
+
+        Records resources and supply
+        The state of all structures is recorded as well as the number of units
+        """
         minerals = bot.minerals
         vespene = bot.vespene
-        w_minerals = 12 # fix this
+        w_minerals = 12 #TODO fix this
         w_vespene = 0
         supply = bot.supply_used
         supply_cap = bot.supply_cap
@@ -122,22 +131,20 @@ class ManagerBuild(BaseManager):
                 if structure.type_id not in idle_buildings:
                     idle_buildings[structure.type_id] = 0
                 idle_buildings[structure.type_id] += 1
+
             elif structure.is_using_ability:
                 order = structure.orders[0] # we can never have more than one in queue
                 order_id = order.ability
                 progress = order.progress
                 cost_time = bot.calculate_cost(order_id).time
 
-                # apperantly difficult to get the UnitTypeId from AbilityId in a nice way, might wanna create our own dict for that
+                # apparently difficult to get the UnitTypeId from AbilityId in a nice way, might wanna create our own dict for that
                 # however, we can just disregard this as of now
-                print("order: {}".format(order))
-                print("time left in ticks: {}".format((1-progress) * cost_time))
+                #TODO add unit being created to busy_units
                 busy_units.append((structure.type_id, (1-progress) * cost_time))
             else:
                 # this "should" not happen xd
-                print("ERROR, PLEASE LOOK FOR THIS IN MANAGER_BUILD\n,\
-                       ERROR, PLEASE LOOK FOR THIS IN MANAGER_BUILD\n,\
-                       ERROR, PLEASE LOOK FOR THIS IN MANAGER_BUILD")
+                print("ERROR, PLEASE LOOK FOR THIS IN MANAGER_BUILD")
 
         for unit in bot.units:
             if unit in units:
@@ -145,36 +152,12 @@ class ManagerBuild(BaseManager):
             else:
                 units[unit.type_id] = 1
 
-        #for structure in bot.structures.filter(lambda s: ):
-        #    busy_units.append((structure.type_id, 50)) # fix this
-
-        plan = []
-
-        bo_state = BuildorderState(minerals, vespene,
-                        w_minerals, w_vespene,
-                        supply, supply_cap,
-                        idle_buildings,
-                        units,
-                        busy_units,
-                        plan,
-                        bot)
-        print(bo_state)
-
-        #print("TEST PYLON")
-        #test_pylon = bo_state.when(PYLON)
-        #print("time: {}\n".format(test_pylon))
-        print("TEST PROBE")
-        test_probe = bo_state.when(PROBE)
-        print("time: {}\n".format(test_probe))
-        #print("TEST ZEALOT")
-        #test_zealot = bo_state.when(ZEALOT)
-
+        plan = [] #TODO consider if a initial plan is required
+        return BuildorderState(minerals, vespene, w_minerals, w_vespene, supply, supply_cap,
+                        idle_buildings, units, busy_units, plan, bot)
         
-        #print("tests: \n pylon: {} \n probe: {} \n zealot: {}".format(test_pylon, test_probe, test_zealot))
-
 
     async def on_step(self, bot: sc2.BotAI, iteration):
-        self.test(bot)
         if len(self.build_queue) == 0:
             return
 
@@ -186,6 +169,13 @@ class ManagerBuild(BaseManager):
             nexus = bot.townhalls.ready.random
         
         build_unit = self.build_queue[0]
+        current_bo_state = self.get_buildorder_state(bot)
+        time = current_bo_state.when(build_unit)
+        print("Current build order: {}".format(self.build_queue))
+        print("Current BuildorderState: {}".format(current_bo_state))
+        print("Current build: {} in ({}, {}) (ticks, seconds)".format(
+            build_unit, time, time/(22.4)))
+        print()
         if await self.build_unit(bot, build_unit):
             del self.build_queue[0]
 

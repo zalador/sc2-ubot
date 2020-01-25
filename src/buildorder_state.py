@@ -27,6 +27,9 @@ class BusyUnit:
     def __lt__(self, other):
         return self.ticks_left < other.ticks_left
 
+    def __repr__(self):
+        return "BusyUnit({}, {})".format(self.unit_id, self.ticks_left)
+
 class BuildorderState:
     """
     State that is used in our buildorder planner
@@ -105,7 +108,7 @@ class BuildorderState:
             return 0
         for busy_unit in self.busy_units:
             if busy_unit.unit_id == unit:
-                min_time = min(min_time, time)
+                min_time = min(min_time, busy_unit.ticks_left)
 
         return min_time if min_time != START_TIME else -1
 
@@ -121,8 +124,12 @@ class BuildorderState:
         if not only_busy and unit in self.idle_buildings and self.idle_buildings[unit] > 0:
             # check if we have atleast one idle
             return 0
+        for busy_unit in self.busy_units:
+            if busy_unit.unit_id == unit:
+                min_time = min(min_time, busy_unit.ticks_left)
+
+        return min_time if min_time != START_TIME else -1
     
-        return self.when_unit_ready(unit)
 
     def when(self, unit: UnitTypeId) -> int:
         """
@@ -138,45 +145,47 @@ class BuildorderState:
 
         if self.minerals - cost_minerals < 0:
             if self.w_minerals == 0:
+                print("Building unit {} failed due to no mineral workers".format(unit))
                 return -1
             diff = cost_minerals - self.minerals
             max_time = max(max_time, diff / (MINERALS_PER_TICK*self.w_minerals))
-        print("minerals ok")
 
         if self.vespene - cost_vespene < 0:
             if self.w_vespene == 0:
+                print("Building unit {} failed due to no vespene workers".format(unit))
                 return -1
             diff = cost_vespene - self.vespene
             max_time = max(max_time, diff / (VESPENE_PER_TICK*self.w_vespene))
-        print("vespene ok")
 
-        print("cost supply: {}".format(cost_supply))
         if self.supply + cost_supply > self.supply_cap:
             if self.supply_cap > 200: # we cannot build more supply
+                print("Building unit {} failed due to no supply space (>=200)".format(unit))
                 return -1
             time = self.when_building_ready(PYLON, only_busy=True) # we require a new pylon
             if time < 0:
+                print("Building unit {} failed due to not having no pylons on the way".format(unit))
                 return -1
             max_time = max(max_time, time)
-        print("supply ok")
 
         # check that we can fullfill all tech requirements
         req = unit
         while req in PROTOSS_TECH_REQUIREMENT:
-            time = self.when_building_ready(PROTOSS_TECH_REQUIREMENT[unit])
+            time = self.when_building_ready(PROTOSS_TECH_REQUIREMENT[req])
             if time < 0:
+                print("Building unit {} failed due to not having tech-req {}".format(unit, PROTOSS_TECH_REQUIREMENT[req]))
                 return -1
             max_time = max(max_time, time)
-            req = PROTOSS_TECH_REQUIREMENT[unit]
-        print("req ok")
+            req = PROTOSS_TECH_REQUIREMENT[req]
     
         creators = list(UNIT_TRAINED_FROM[unit])
-        print("creators: " + str(creators))
-        print("units: " + str(self.units))
-        min_time_creator = 10000
+        MAX_TIME = 10000
+        min_time_creator = MAX_TIME 
+        
+        # For e.g. gateway units, they can also be constructed from warpgates
+        # Here we check for if any creator exists
         for creator in creators:
             # handle the probe case seperately
-            time = -1
+            time = 10000
             if creator == PROBE:
                 if PROBE in self.units and self.units[PROBE] > 0:
                     min_time_creator = 0
@@ -184,12 +193,15 @@ class BuildorderState:
                 # we have no PROBE but perhaps we are building one?
                 time = self.when_unit_ready(PROBE)
             else:
-                time = self.when_building_ready(unit)
+                time = self.when_building_ready(creator)
                 
-            if time < 0:
-                return -1
+            if time < 0: # this particular creator does not exists
+                continue
             min_time_creator = min(min_time_creator, time)
-        print("creator ok")
+
+        if min_time_creator == MAX_TIME: # no creator exists
+            print("Building unit {} failed due to not having creators {}".format(unit, creators))
+            return -1
 
         max_time = max(max_time, min_time_creator)
         return max_time
