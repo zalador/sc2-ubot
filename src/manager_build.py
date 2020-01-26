@@ -42,18 +42,19 @@ class ManagerBuild(BaseManager):
         build_req = self.build_info(unit_id)
         for from_id, build_dict in build_req:
             # we handle structures and probes seperately
-            requires_power = ("requires_power" in build_dict)
+            requires_power = "requires_power" in build_dict
             pylon = bot.structures(PYLON).ready.random_or(None)
             nexus = bot.structures(NEXUS).random
 
-            if "required_building" in build_dict and not bot.structures(build_dict["required_building"]).ready.amount >= 1:
-                return False
-
             if requires_power and not pylon:
                 return False
-          
+
+            if "required_building" in build_dict and not \
+                    bot.structures(build_dict["required_building"]).ready.amount >= 1:
+                return False
+
             if from_id == PROBE:
-                # Here we need a big switch case for all different buildings
+                # Here we need a big switch case for all unique buildings
                 if unit_id == ASSIMILATOR:
                     for th in bot.townhalls.ready:
                         # Find all vespene geysers that are closer than range 10 to this townhall
@@ -74,7 +75,9 @@ class ManagerBuild(BaseManager):
                     pass
 
                 else:
-                    await bot.build(unit_id, near=pylon if requires_power else nexus)                
+                    await bot.build(unit_id, near=pylon if requires_power else nexus) 
+                    return True
+                    
 
             else: # it is a structure that builds it, perhaps this needs to be generalized so that we can handle Archons and so on
                 if from_id == WARPGATE:
@@ -86,8 +89,9 @@ class ManagerBuild(BaseManager):
                     return False
                                 
                 bot.do(building.train(unit_id), subtract_cost=True, subtract_supply=True)
+                return True
 
-        return True
+        return False
 
 
     def build_info(self, unit_id : UnitTypeId) -> List[Tuple[UnitTypeId, Dict]]:
@@ -118,7 +122,7 @@ class ManagerBuild(BaseManager):
         supply_cap = bot.supply_cap
         
         units = {}
-        idle_buildings = {}
+        #idle_buildings = {}
         busy_units = []
 
         for structure in bot.structures:
@@ -128,9 +132,11 @@ class ManagerBuild(BaseManager):
                 busy_units.append((structure.type_id, build_time_left))
 
             elif structure.is_idle:
-                if structure.type_id not in idle_buildings:
-                    idle_buildings[structure.type_id] = 0
-                idle_buildings[structure.type_id] += 1
+                if not structure.type_id in units:
+                    units[structure.type_id] = 1
+                else:
+                    units[structure.type_id] += 1
+
 
             elif structure.is_using_ability:
                 order = structure.orders[0] # we can never have more than one in queue
@@ -154,7 +160,8 @@ class ManagerBuild(BaseManager):
 
         plan = [] #TODO consider if a initial plan is required
         return BuildorderState(minerals, vespene, w_minerals, w_vespene, supply, supply_cap,
-                        idle_buildings, units, busy_units, plan, bot)
+                        #idle_buildings,
+                        units, busy_units, plan, bot)
         
 
     async def on_step(self, bot: sc2.BotAI, iteration):

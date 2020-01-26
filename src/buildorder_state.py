@@ -40,7 +40,7 @@ class BuildorderState:
     
     def __init__(self, minerals, vespene, w_minerals, w_vespene,
                        supply, supply_cap,
-                       idle_buildings: Dict[UnitTypeId, int],
+                       #idle_buildings: Dict[UnitTypeId, int],
                        units: Dict[UnitTypeId, int],
                        busy_units: List[Tuple[UnitTypeId, int]],
                        plan: List[UnitTypeId],
@@ -59,7 +59,7 @@ class BuildorderState:
         self.w_vespene: int = w_vespene
         self.supply: int = supply
         self.supply_cap: int = supply_cap
-        self.idle_buildings = idle_buildings
+        #self.idle_buildings = idle_buildings
         self.units = units
         self.busy_units: List[BusyUnit] = [BusyUnit(unit_id, time) for unit_id, time in busy_units]
         self.plan: List[UnitTypeId] = plan
@@ -96,24 +96,23 @@ class BuildorderState:
             setattr(result, k, deepcopy(v, memo))
 
 
-    #TODO Fix these functions, no sense of looking at unit as builders are the only "when" we can care about on the unit side
-    def when_unit_ready(self, unit: UnitTypeId) -> int:
-        """
-        Returns the number of ticks until a unit is ready
-        Returns -1 if no building is found
-        """
-        START_TIME = 10000
-        min_time = START_TIME
-        if unit in self.units and self.units[unit] > 0:
-            return 0
-        for busy_unit in self.busy_units:
-            if busy_unit.unit_id == unit:
-                min_time = min(min_time, busy_unit.ticks_left)
+    #def when_unit_ready(self, unit: UnitTypeId) -> int:
+    #    """
+    #    Returns the number of ticks until a unit is ready
+    #    Returns -1 if no building is found
+    #    """
+    #    START_TIME = 10000
+    #    min_time = START_TIME
+    #    if unit in self.units and self.units[unit] > 0:
+    #        return 0
+    #    for busy_unit in self.busy_units:
+    #        if busy_unit.unit_id == unit:
+    #            min_time = min(min_time, busy_unit.ticks_left)
 
-        return min_time if min_time != START_TIME else -1
+    #    return min_time if min_time != START_TIME else -1
 
 
-    def when_building_ready(self, unit: UnitTypeId, only_busy=False) -> int:
+    def when_unit_ready(self, unit: UnitTypeId, only_busy=False) -> int:
         """
         Returns the number of ticks until a building is ready
         Can either be ready directly or when moved from self.busy_units
@@ -121,7 +120,7 @@ class BuildorderState:
         """
         START_TIME = 10000
         min_time = START_TIME
-        if not only_busy and unit in self.idle_buildings and self.idle_buildings[unit] > 0:
+        if not only_busy and unit in self.units and self.units[unit] > 0:
             # check if we have atleast one idle
             return 0
         for busy_unit in self.busy_units:
@@ -161,7 +160,7 @@ class BuildorderState:
             if self.supply_cap > 200: # we cannot build more supply
                 print("Building unit {} failed due to no supply space (>=200)".format(unit))
                 return -1
-            time = self.when_building_ready(PYLON, only_busy=True) # we require a new pylon
+            time = self.when_unit_ready(PYLON, only_busy=True) # we require a new pylon
             if time < 0:
                 print("Building unit {} failed due to not having no pylons on the way".format(unit))
                 return -1
@@ -170,7 +169,7 @@ class BuildorderState:
         # check that we can fullfill all tech requirements
         req = unit
         while req in PROTOSS_TECH_REQUIREMENT:
-            time = self.when_building_ready(PROTOSS_TECH_REQUIREMENT[req])
+            time = self.when_unit_ready(PROTOSS_TECH_REQUIREMENT[req])
             if time < 0:
                 print("Building unit {} failed due to not having tech-req {}".format(unit, PROTOSS_TECH_REQUIREMENT[req]))
                 return -1
@@ -193,7 +192,7 @@ class BuildorderState:
                 # we have no PROBE but perhaps we are building one?
                 time = self.when_unit_ready(PROBE)
             else:
-                time = self.when_building_ready(creator)
+                time = self.when_unit_ready(creator)
                 
             if time < 0: # this particular creator does not exists
                 continue
@@ -205,3 +204,57 @@ class BuildorderState:
 
         max_time = max(max_time, min_time_creator)
         return max_time
+
+    def sim(self, ticks, bot):
+        """
+        Simulates the current BuildorderState 'ticks' forward.
+        Adds resources
+        Handles busy_units: updates supply if pylon is built, workers working if probe is
+        finished, and of course the number of units if something is finished
+        """
+        self.ticks += ticks
+
+        # update resources
+        self.minerals += self.w_minerals * MINERALS_PER_TICK * ticks
+        self.vespene += self.w_vespene * VESPENE_PER_TICK * ticks
+
+        new_busy = []
+        for i in range(len(self.busy_units)):
+            busy_unit = self.busy_units[i].unit_id
+            ticks_left = self.busy_units[i].ticks_left
+            tick_diff = ticks - ticks_left
+
+            if ticks_left - ticks <= 0:
+                if busy_unit == PROBE: # we add new probes to minerals
+                    self.w_minerals += 1 # TODO fix max mineral utilization 
+                    self.minerals += tick_diff * MINERALS_PER_TICK
+
+                elif busy_unit == ASSIMILATOR: # we always utilize assimilators fully
+                    if not ASSIMILATOR in self.units:
+                        self.units[ASSIMILATOR] = 1
+                    else:
+                        self.units[ASSIMILATOR] += 1
+
+                    self.w_minerals = min(0, self.w_minerals-3)
+                    self.w_vespene += 3
+                    self.minerals -= 3 * tick_diff * MINERALS_PER_TICK
+                    self.vespene += 3* tick_diff * VESPENE_PER_TICK
+
+                elif busy_unit == PYLON:
+                    if not PYLON in self.units:
+                        self.units[PYLON] = 1
+                    else:
+                        self.units[PYLON] += 1
+                    self.supply_cap = min(200, self.supply_cap + 8) 
+
+                else:
+                    if not busy_unit in self.units:
+                        self.units[busy_unit] = 1
+                    else:
+                        self.units[busy_unit] += 1
+
+            else: # the unit is still busy
+                new_busy.append(BusyUnit(busy_unit, ticks_left - ticks))
+
+        # update the busy_units
+        self.busy_units = new_busy
