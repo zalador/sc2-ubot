@@ -1,4 +1,6 @@
 import random
+from queue import PriorityQueue 
+from copy import copy, deepcopy
 
 import sc2
 from sc2 import Race, Difficulty
@@ -27,7 +29,8 @@ class ManagerBuild(BaseManager):
         We keep a linear list of stuff to build
         To handle research ids, a more general list is needed, perhaps a isinstance can work
         """
-        self.build_queue: List[UnitTypeId] = [PROBE, PROBE, PYLON, PROBE, ASSIMILATOR, GATEWAY, PROBE, PYLON, PROBE, PROBE, CYBERNETICSCORE, PROBE, STALKER]
+        #self.build_queue: List[UnitTypeId] = [PROBE, PROBE, PYLON, PROBE, ASSIMILATOR, GATEWAY, PROBE, PYLON, PROBE, PROBE, CYBERNETICSCORE, PROBE, STALKER]
+        self.build_queue = []
 
     async def build_unit(self, bot : sc2.BotAI, unit_id : UnitTypeId) -> bool:
         """
@@ -116,13 +119,12 @@ class ManagerBuild(BaseManager):
         """
         minerals = bot.minerals
         vespene = bot.vespene
-        w_minerals = 12 #TODO fix this
-        w_vespene = 0
+        
+        w_minerals, w_vespene = bot.m_resources.workers_working(bot)
         supply = bot.supply_used
         supply_cap = bot.supply_cap
         
         units = {}
-        #idle_buildings = {}
         busy_units = []
 
         for structure in bot.structures:
@@ -153,18 +155,166 @@ class ManagerBuild(BaseManager):
                 print("ERROR, PLEASE LOOK FOR THIS IN MANAGER_BUILD")
 
         for unit in bot.units:
-            if unit in units:
-                units[unit.type_id] += 1
-            else:
+            if not unit.type_id in units:
                 units[unit.type_id] = 1
+            else:
+                units[unit.type_id] += 1
 
         plan = [] #TODO consider if a initial plan is required
         return BuildorderState(minerals, vespene, w_minerals, w_vespene, supply, supply_cap,
-                        #idle_buildings,
                         units, busy_units, plan, bot)
         
 
+    def calculate_buildorder(self, goal: Dict[UnitTypeId, int], bot) -> List[UnitTypeId]:
+        current_bo_state = self.get_buildorder_state(bot)
+
+        best_plan: List[UnitTypeId] = []
+        best_plan_ticks: int = 100000000
+        
+        states = PriorityQueue()
+        iteration_major = 0
+        iteration_expand = 0
+        max_iteration_major = 50000
+
+        orders = [PROBE, PYLON]
+        states.put(current_bo_state)
+
+        # create a upper bound on units that are to be built
+        bounds = copy(current_bo_state.units)
+        max_supply = 0
+        
+        # add all requirements that will be needed to reach the goal
+        for unit_id, amount in goal.items():
+            if not unit_id in bounds:
+                bounds[unit_id] = amount
+            else:
+                bounds[unit_id] = max(bounds[unit_id], amount)
+
+            creators = list(UNIT_TRAINED_FROM[unit_id])
+            for creator in creators:
+                if not creator in bounds:
+                    bounds[creator] = amount
+                else:
+                    bounds[creator] = max(bounds[creator], amount)
+
+            req = unit_id # TODO this is also used in buildorder_state, fix this
+            while req not in orders:
+                orders.append(req)
+                if not req in bounds:
+                    bounds[req] = 1
+                else:
+                    bounds[req] = max(bounds[req], 1)
+
+                # if a requirement requires vespene, we add that to the orders
+                if bot.calculate_cost(req).vespene > 0:
+                    if not ASSIMILATOR in orders:
+                        orders.append(ASSIMILATOR)
+
+                if req in PROTOSS_TECH_REQUIREMENT:
+                    req = PROTOSS_TECH_REQUIREMENT[req]
+                else:
+                    break
+            
+            max_supply += bot.calculate_supply_cost(req) * amount
+
+
+        # special case bounds
+        if NEXUS in goal:
+            bounds[NEXUS] = goal[NEXUS]
+        else:
+            bounds[NEXUS] = current_bo_state.get_number_of_unit(NEXUS)
+        bounds[PYLON] = max(bounds[PYLON], (max_supply+12) // 8) # round the number of pylons up
+        if ASSIMILATOR in goal:
+            bounds[ASSIMILATOR] = goals[ASSIMILATOR]
+        else:
+            bounds[ASSIMILATOR] = bounds[NEXUS] * 2 if ASSIMILATOR in orders else 0
+        
+        bounds[CYBERNETICSCORE] = 1
+        bounds[TWILIGHTCOUNCIL] = 1
+        bounds[DARKSHRINE] = 1
+        bounds[TEMPLARARCHIVE] = 1
+        bounds[ROBOTICSBAY] = 1
+        bounds[FLEETBEACON] = 1
+
+        print("To build: {} \nthe following orders are required: {}".format(goal, orders))
+        print("Bounds: {}".format(bounds))
+
+        while not states.empty() and iteration_major < max_iteration_major:
+            iteration_major += 1
+            cur = states.get()
+
+            #print("Current expand iteration: {} and plan: {}".format(iteration_major, cur))
+            # check if we fullfill goal
+            units_left = {}
+            for unit_id, amount in goal.items():
+                cur_amount = cur.get_number_of_unit(unit_id)
+                if cur_amount < amount:
+                    units_left[unit_id] = amount - cur_amount
+
+            if not units_left:
+                #print("Found a goal")
+                # all goals fullfilled
+                if cur.ticks < best_plan_ticks:
+                    best_plan = cur.plan
+                    best_plan_ticks = cur.ticks
+                    #print(" the plan was better: {}\n".format(cur.plan))
+                    continue
+
+            if cur.ticks > best_plan_ticks:
+                continue
+
+            # go through all orders
+            for order in orders:
+                iteration_expand += 1
+
+                if cur.get_number_of_unit(order) + 1 > bounds[order]:
+                    continue
+
+                # TODO we need some way of limiting what order we issue
+                # in kill_kurt, there was a upper_bound map
+                ticks_until = cur.when(order)
+                if ticks_until < 0:
+                    continue
+
+                #print(" adding {} to plan".format(order))
+                # add the new state
+                new_state = deepcopy(cur)
+                new_state.sim(ticks_until, bot)
+                new_state.build(order, bot)
+
+                states.put(new_state)
+
+            #print()
+            
+        # at this point, we have a best plan hopefully
+        print("major iterations: {}, ticks: {}, seconds: {}, best_plan: {}".format(iteration_major, best_plan_ticks, best_plan_ticks/22.4, best_plan))
+        return best_plan
+        
     async def on_step(self, bot: sc2.BotAI, iteration):
+        #cur = self.get_buildorder_state(bot)
+        # add the new state
+        #new_state = deepcopy(cur)
+        #new_state.sim(100, bot)
+        #new_state.build(PROBE, bot)
+
+        #print("cur busy_units: {}, new_state busy_units: {}".format(cur.busy_units, new_state.busy_units))
+
+        #new_state.sim(500, bot)
+
+        # healthy checks
+        #print("cur workers: ({}, {}), cur resources: ({}, {}), cur ticks: {}".format(cur.w_minerals, cur.w_vespene, cur.minerals, cur.vespene, cur.ticks))
+        #print("new_state workers: ({}, {}), new_state resources: ({}, {}), new_state ticks: {}".format(new_state.w_minerals, new_state.w_vespene, new_state.minerals, new_state.vespene, new_state.ticks))
+        
+        #print("cur units: {}, new_state units: {}".format(cur.units, new_state.units))
+        
+        if iteration == 1:
+            goal = {PROBE: 20, PYLON: 1, GATEWAY: 1, STALKER: 1}
+            plan = self.calculate_buildorder(goal, bot)
+            print("Calculated plan: {}".format(plan))
+            self.build_queue = plan
+        #assert(1==2)
+
+
         if len(self.build_queue) == 0:
             return
 
