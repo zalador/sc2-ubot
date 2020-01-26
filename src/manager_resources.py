@@ -40,30 +40,10 @@ class ManagerResources(BaseManager):
         gas = 0
         for mining_place in bases | gas_buildings:
             if mining_place.has_vespene:
-                # get all workers that target the gas extraction site
-                # or are on their way back from it
-                local_workers = bot.workers.filter(
-                    lambda unit: unit.order_target == mining_place.tag
-                    or (unit.is_carrying_vespene and unit.order_target == bases.closest_to(mining_place).tag)
-                )
-                gas += local_workers.amount
+                gas += mining_place.assigned_harvesters
             else:
-                # get tags of minerals around expansion
-                local_minerals_tags = {
-                    mineral.tag for mineral in bot.mineral_field if mineral.distance_to(mining_place) <= 8
-                }
-                # get all target tags a worker can have
-                # tags of the minerals he could mine at that base
-                # get workers that work at that gather site
-                local_workers = bot.workers.filter(
-                    lambda unit: unit.order_target in local_minerals_tags
-                    or (unit.is_carrying_minerals and unit.order_target == mining_place.tag)
-                )
-                minerals += local_workers.amount
+                minerals += mining_place.assigned_harvesters
 
-        workers_collecting = bot.workers.collecting()
-        print("workers_collecting? " + str(workers_collecting.amount))
-        print("Workers working complex: " + str((minerals, gas)))
         return (minerals, gas)
 
     def assign_closest_mineral(self, bot: sc2.BotAI, unit: Unit) -> bool:
@@ -127,13 +107,15 @@ class ManagerResources(BaseManager):
 
     async def on_step(self, bot: sc2.BotAI, iteration):
         # assign idle workers to closest
+        w = self.workers_working(bot)
+        
         idle = bot.workers.idle
         for worker in idle:
             self.assign_probe(bot, worker, bot.gas_focus)
 
         # every n:th iteration, rebalance
         if iteration % 10*16:
-            bot.distribute_workers()
+            await bot.distribute_workers()
 
 
     async def on_unit_created(self, bot: sc2.BotAI, unit: Unit):
