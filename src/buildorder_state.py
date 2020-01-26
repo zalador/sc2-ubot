@@ -40,13 +40,11 @@ class BuildorderState:
     
     def __init__(self, minerals, vespene, w_minerals, w_vespene,
                        supply, supply_cap,
-                       #idle_buildings: Dict[UnitTypeId, int],
                        units: Dict[UnitTypeId, int],
                        busy_units: List[Tuple[UnitTypeId, int]],
                        plan: List[UnitTypeId],
                        bot: sc2.BotAI):
         """
-        parameter idle_buildings: number of each specific building we have
         parameter units: number of each specific unit we have
         parameter busy_units: list of (id, time) for units that are not idle (under construction
                                or constructing)
@@ -59,7 +57,6 @@ class BuildorderState:
         self.w_vespene: int = w_vespene
         self.supply: int = supply
         self.supply_cap: int = supply_cap
-        #self.idle_buildings = idle_buildings
         self.units = units
         self.busy_units: List[BusyUnit] = [BusyUnit(unit_id, time) for unit_id, time in busy_units]
         self.plan: List[UnitTypeId] = plan
@@ -75,8 +72,9 @@ class BuildorderState:
         """
         s = "ticks: {}, (m, w_m): ({}, {}), (v, w_v): ({}, {})\n".format(self.ticks, self.minerals,
                 self.w_minerals, self.vespene, self.w_vespene)
-        s += "(s, s_c): ({}, {}), plan: {}".format(self.supply,
+        s += "(s, s_c): ({}, {}), plan: {}\n".format(self.supply,
                 self.supply_cap, self.ticks, self.plan)
+        s += "busy_units: {}\nunits: {}".format(self.busy_units, self.units)
         return s
 
     def __lt__(self, other):
@@ -258,3 +256,31 @@ class BuildorderState:
 
         # update the busy_units
         self.busy_units = new_busy
+
+
+    def build(self, unit: UnitTypeId, bot):
+        """
+        Updates the state of self when building 'unit'
+        Removes resources and adds to busy_units
+        Note: assumes that the unit can be built
+        """
+        cost = bot.calculate_cost(unit)
+        cost_minerals = cost.minerals
+        cost_vespene = cost.vespene
+        build_time = cost.time
+        supply_cost = bot.calculate_supply_cost(unit)
+
+        creators = list(UNIT_TRAINED_FROM[unit])
+        for creator in creators:
+            if creator == PROBE: # the probe needs to move away and build the structure
+                self.minerals -= 10
+
+            elif creator in self.units:
+                self.units[creator] -= 1
+                new_busy_creator = BusyUnit(creator, build_time)
+                self.busy_units.append(new_busy_creator)
+                break
+        
+        new_busy_unit = BusyUnit(unit, build_time)
+        self.busy_units.append(new_busy_unit)
+        self.plan.append(unit)
