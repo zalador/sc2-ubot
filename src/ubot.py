@@ -22,9 +22,13 @@ class UBot(sc2.BotAI):
         self.managers: List[BaseManager] = []
         self.gas_focus = True
 
-        self.managers.append(manager_build.ManagerBuild())
-        self.managers.append(manager_resources.ManagerResources())
-        self.managers.append(manager_army.ManagerArmy())
+        self.m_build = manager_build.ManagerBuild()
+        self.m_resources = manager_resources.ManagerResources()
+        self.m_army = manager_army.ManagerArmy()
+
+        self.managers.append(self.m_build)
+        self.managers.append(self.m_resources)
+        self.managers.append(self.m_army)
         
     async def on_step(self, iteration):
         print("Current iteration: " + str(iteration))
