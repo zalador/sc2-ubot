@@ -165,6 +165,14 @@ class ManagerBuild(BaseManager):
                         units, busy_units, plan, bot)
         
 
+    def get_distance_to_goal(self, goal: Dict[UnitTypeId, int], state: BuildorderState):
+        dis = 0
+        for unit_id, amount in goal.items():
+            state_amount = state.get_number_of_unit(unit_id)
+            dis += (amount-state_amount)**2
+        return dis
+
+
     def calculate_buildorder(self, goal: Dict[UnitTypeId, int], bot) -> List[UnitTypeId]:
         current_bo_state = self.get_buildorder_state(bot)
 
@@ -174,7 +182,6 @@ class ManagerBuild(BaseManager):
         states = PriorityQueue()
         iteration_major = 0
         iteration_expand = 0
-        max_iteration_major = 50000
 
         orders = [PROBE, PYLON]
         states.put(current_bo_state)
@@ -192,6 +199,11 @@ class ManagerBuild(BaseManager):
 
             creators = list(UNIT_TRAINED_FROM[unit_id])
             for creator in creators:
+                if creator == WARPGATE:
+                    continue
+                if not creator in orders:
+                    orders.append(creator)
+
                 if not creator in bounds:
                     bounds[creator] = amount
                 else:
@@ -223,7 +235,7 @@ class ManagerBuild(BaseManager):
             bounds[NEXUS] = goal[NEXUS]
         else:
             bounds[NEXUS] = current_bo_state.get_number_of_unit(NEXUS)
-        bounds[PYLON] = max(bounds[PYLON], (max_supply+12) // 8) # round the number of pylons up
+        bounds[PYLON] = max(bounds[PYLON], (max_supply+4-15) // 8) # round the number of pylons up
         if ASSIMILATOR in goal:
             bounds[ASSIMILATOR] = goals[ASSIMILATOR]
         else:
@@ -239,11 +251,12 @@ class ManagerBuild(BaseManager):
         print("To build: {} \nthe following orders are required: {}".format(goal, orders))
         print("Bounds: {}".format(bounds))
 
+        max_iteration_major = 500
         while not states.empty() and iteration_major < max_iteration_major:
             iteration_major += 1
             cur = states.get()
 
-            #print("Current expand iteration: {} and plan: {}".format(iteration_major, cur))
+            print("Current expand iteration: {} and plan: {}".format(iteration_major, cur))
             # check if we fullfill goal
             units_left = {}
             for unit_id, amount in goal.items():
@@ -261,6 +274,7 @@ class ManagerBuild(BaseManager):
                     continue
 
             if cur.ticks > best_plan_ticks:
+                print()
                 continue
 
             # go through all orders
@@ -281,13 +295,16 @@ class ManagerBuild(BaseManager):
                 new_state = deepcopy(cur)
                 new_state.sim(ticks_until, bot)
                 new_state.build(order, bot)
-
+                
+                heuristic = self.get_distance_to_goal(goal, new_state)
+                new_state.heuristic = heuristic
                 states.put(new_state)
 
-            #print()
+            print()
             
         # at this point, we have a best plan hopefully
-        print("major iterations: {}, ticks: {}, seconds: {}, best_plan: {}".format(iteration_major, best_plan_ticks, best_plan_ticks/22.4, best_plan))
+        print("major iterations: {}, minor iterations: {}, ticks: {}, seconds: {}, ".format(iteration_major, iteration_expand, best_plan_ticks, best_plan_ticks/22.4))
+        print("best_plan: {}".format(best_plan))
         return best_plan
         
     async def on_step(self, bot: sc2.BotAI, iteration):
@@ -308,11 +325,11 @@ class ManagerBuild(BaseManager):
         #print("cur units: {}, new_state units: {}".format(cur.units, new_state.units))
         
         if iteration == 1:
-            goal = {PROBE: 20, PYLON: 1, GATEWAY: 1, STALKER: 1}
+            goal = {PROBE: 20, PYLON: 1, ZEALOT: 4}#, GATEWAY: 1, STALKER: 1}
             plan = self.calculate_buildorder(goal, bot)
             print("Calculated plan: {}".format(plan))
             self.build_queue = plan
-        #assert(1==2)
+            assert(1==2)
 
 
         if len(self.build_queue) == 0:

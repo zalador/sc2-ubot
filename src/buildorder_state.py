@@ -62,6 +62,7 @@ class BuildorderState:
         self.plan: List[UnitTypeId] = plan
         self.bot: BotAI = bot        
 
+        self.heuristic = 0
         self.ticks = 0
 
 
@@ -70,18 +71,25 @@ class BuildorderState:
         Prints the basic information:
         ticks, resources, workers, supply and plan
         """
-        s = "ticks: {}, (m, w_m): ({}, {}), (v, w_v): ({}, {}), ".format(self.ticks, self.minerals,
-                self.w_minerals, self.vespene, self.w_vespene)
+        s = "ticks: {}, heuristic: {}, (m, w_m): ({}, {}), (v, w_v): ({}, {}), ".format(self.ticks, self.minerals, self.heuristic, self.w_minerals, self.vespene, self.w_vespene)
         s += "(s, s_c): ({}, {}), ticks: {}, plan: {}, ".format(self.supply,
                 self.supply_cap, self.ticks, self.plan)
         s += "busy_units: {}, units: {}".format(self.busy_units, self.units)
         return s
 
+    def get_plan_length(self):
+        max_busy = max(self.busy_units, key=lambda busy_unit: busy_unit.ticks_left)
+        return self.ticks + max_busy.ticks_left
+
     def __lt__(self, other):
         """
-        We induce a order on the plans through the plan length in ticks
+        We induce a order on the plans through distance to goal
+        self.heuristic needs to be set as number of goals reached
         """
-        return self.ticks < other.ticks
+        if self.heuristic == other.heuristic:
+            return self.ticks < other.ticks
+        return self.heuristic < other.heuristic
+        #return self.get_plan_length() < other.get_plan_length()
 
     def __deepcopy__(self, memo):
         #print("inside deepcopy")
